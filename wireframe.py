@@ -76,9 +76,3 @@ class Wireframe:
             theta  = math.atan2(y, x) + radians
             node.x = cx + d * math.cos(theta)
             node.y = cy + d * math.sin(theta)
-
-
-
-
-
-
