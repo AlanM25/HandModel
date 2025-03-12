@@ -3,6 +3,8 @@ import pygame
 from obj_loader import *
 from drawShapes import *
 from pygame.locals import *
+import mediapipe as mp
+import cv2
 
 key_to_function = {
     pygame.K_LEFT:   (lambda x: x.translateAll('x', -10)),
@@ -35,12 +37,14 @@ class ProjectionViewer:
         self.z = [[0 for x in range(height)] for y in range(width)]
         self.light_pos = wireframe.Node((400,300,400))
 
+        # Initialize MediaPipe
+        self.mp_hands = mp.solutions.hands
+        self.hands = self.mp_hands.Hands()
+        self.mp_drawing = mp.solutions.drawing_utils
 
     def addWireframe(self, name, wireframe):
         """ Add a named wireframe object. """
-
         self.wireframes[name] = wireframe
-
 
     def run(self):
         """ Create a pygame screen until it is closed. """
@@ -48,6 +52,9 @@ class ProjectionViewer:
         rx, ry = (0,0)
         tx, ty = (0,0)
         rotate = move = False
+
+        # Initialize webcam
+        cap = cv2.VideoCapture(0)
 
         running = True
         while running:
@@ -73,6 +80,24 @@ class ProjectionViewer:
                         tx -= i
                         ty += j
 
+            # Capture frame from webcam
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            # Process frame with MediaPipe
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            results = self.hands.process(frame)
+
+            if results.multi_hand_landmarks:
+                for hand_landmarks in results.multi_hand_landmarks:
+                    self.mp_drawing.draw_landmarks(frame, hand_landmarks, self.mp_hands.HAND_CONNECTIONS)
+
+            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            cv2.imshow('MediaPipe Hands', frame)
+
+            if cv2.waitKey(5) & 0xFF == 27:
+                break
 
             hand.translate('x',-tx/15)
             hand.translate('y',ty/15)
@@ -83,6 +108,9 @@ class ProjectionViewer:
 
             pygame.display.flip()
 
+        cap.release()
+        cv2.destroyAllWindows()
+
     def clear_z(self):
         for i in range(self.width):
             for j in range(self.height):
@@ -91,48 +119,39 @@ class ProjectionViewer:
 
     def display(self,hand):
         """ Draw the wireframes on the screen. """
-
         self.screen.fill(self.background)
         for f in hand.faces:
             if (len(f) == 3):
                 pygame.draw.line(self.screen, self.edgeColour, (hand.nodes[f[0]-1].x, hand.nodes[f[0]-1].y), (hand.nodes[f[1]-1].x, hand.nodes[f[1]-1].y))
                 pygame.draw.line(self.screen,self.edgeColour, (hand.nodes[f[1]-1].x, hand.nodes[f[1]-1].y), (hand.nodes[f[2]-1].x, hand.nodes[f[2]-1].y))
                 pygame.draw.line(self.screen,self.edgeColour, (hand.nodes[f[2]-1].x, hand.nodes[f[2]-1].y), (hand.nodes[f[0]-1].x, hand.nodes[f[0]-1].y))
+        """uncomment these sections to fill the wireframes with colors
                 draw_line(self.screen, (hand.nodes[f[0]-1].x, hand.nodes[f[0]-1].y), (hand.nodes[f[1]-1].x, hand.nodes[f[1]-1].y), self.edgeColour)
                 draw_line(self.screen, (hand.nodes[f[1]-1].x, hand.nodes[f[1]-1].y), (hand.nodes[f[2]-1].x, hand.nodes[f[2]-1].y),self.edgeColour)
                 draw_line(self.screen, (hand.nodes[f[2]-1].x, hand.nodes[f[2]-1].y), (hand.nodes[f[0]-1].x, hand.nodes[f[0]-1].y),self.edgeColour)
 
-
-
         self.clear_z()
         for f in hand.faces:
-            fillTriangle(self.screen,hand.nodes[f[0]-1],hand.nodes[f[1]-1],hand.nodes[f[2]-1],(194,151,120),self.z,self.light_pos)
+            fillTriangle(self.screen,hand.nodes[f[0]-1],hand.nodes[f[1]-1],hand.nodes[f[2]-1],(194,151,120),self.z,self.light_pos)"""
 
     def translateAll(self, axis, d):
         """ Translate all wireframes along a given axis by d units. """
-
-        for wireframe in self.wireframes.itervalues():
+        for wireframe in self.wireframes.values():
             wireframe.translate(axis, d)
 
     def scaleAll(self, scale):
         """ Scale all wireframes by a given scale, centred on the centre of the screen. """
-
         centre_x = self.width/2
         centre_y = self.height/2
-
-        for wireframe in self.wireframes.itervalues():
+        for wireframe in self.wireframes.values():
             wireframe.scale((centre_x, centre_y), scale)
 
     def rotateAll(self, axis, theta):
         """ Rotate all wireframe about their centre, along a given axis by a given angle. """
-
         rotateFunction = 'rotate' + axis
-
-        for wireframe in self.wireframes.itervalues():
+        for wireframe in self.wireframes.values():
             centre = wireframe.findCentre()
             getattr(wireframe, rotateFunction)(centre, theta)
-
-
 
 
 if __name__ == '__main__':

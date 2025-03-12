@@ -2,8 +2,8 @@ class OBJ:
     def __init__(self, filename):
         """Loads a Wavefront OBJ file. """
         self.vertices = []
-        #self.normals = []
-        #self.texcoords = []
+        # self.normals = []
+        # self.texcoords = []
         self.faces = []
 
         for line in open(filename, "r"):
@@ -20,4 +20,4 @@ class OBJ:
                     w = v.split('/')
                     face.append(int(w[0]))
                 self.faces.append(face)
-	
+
