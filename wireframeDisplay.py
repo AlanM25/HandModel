@@ -92,17 +92,18 @@ class ProjectionViewer:
             if results.multi_hand_landmarks:
                 for hand_landmarks in results.multi_hand_landmarks:
                     self.mp_drawing.draw_landmarks(frame, hand_landmarks, self.mp_hands.HAND_CONNECTIONS)
+                    # Update wireframe nodes with hand landmarks
+                    for i, landmark in enumerate(hand_landmarks.landmark):
+                        if i < len(hand.nodes):
+                            hand.nodes[i].x = landmark.x * self.width
+                            hand.nodes[i].y = landmark.y * self.height
+                            hand.nodes[i].z = landmark.z * 1000  # Scale z appropriately
 
             frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
             cv2.imshow('MediaPipe Hands', frame)
 
             if cv2.waitKey(5) & 0xFF == 27:
                 break
-
-            hand.translate('x',-tx/15)
-            hand.translate('y',ty/15)
-            hand.rotateX(hand.findCentre(),ry)
-            hand.rotateY(hand.findCentre(),rx)
 
             self.display(hand)
 
