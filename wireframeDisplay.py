@@ -23,7 +23,7 @@ PALM_FACES = [
     (5, 9, 13), (9, 13, 17)
 ]
 
-def draw_cylinder(x1, y1, z1, x2, y2, z2, radius=5, slices=16):
+def draw_cylinder(x1, y1, z1, x2, y2, z2, radius=10, slices=16):
     vx, vy, vz = x2 - x1, y2 - y1, z2 - z1
     length = math.sqrt(vx*vx + vy*vy + vz*vz)
     if length < 0.0001:
@@ -37,7 +37,7 @@ def draw_cylinder(x1, y1, z1, x2, y2, z2, radius=5, slices=16):
     gluCylinder(quadric, radius, radius * 0.85, length, slices, 1)
     glPopMatrix()
 
-def draw_joint(x, y, z, radius=5.0, slices=16, stacks=16):
+def draw_joint(x, y, z, radius=10.0, slices=16, stacks=16):
     glPushMatrix()
     glTranslatef(x, y, z)
     quadric = gluNewQuadric()
@@ -124,7 +124,7 @@ class ProjectionViewer:
                             lm.y = -(landmark.y - 0.5) * 350
                             lm.z = -(landmark.z - 0.1) * 450
 
-            cv2.imshow('MediaPipe Webcam View', cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR))
+            cv2.imshow('MediaPipe Webcam View', frame)
             if cv2.waitKey(1) & 0xFF == 27:
                 break
 
@@ -143,7 +143,7 @@ class ProjectionViewer:
             if i1 < len(hand.nodes) and i2 < len(hand.nodes):
                 n1 = hand.nodes[i1]
                 n2 = hand.nodes[i2]
-                glColor3f(*get_finger_color(i1, i2))
+                glColor3f(1.0, 1.0, 0.0)
                 radius = get_finger_radius(i1, i2)
                 draw_cylinder(n1.x, n1.y, n1.z, n2.x, n2.y, n2.z, radius=radius)
 
