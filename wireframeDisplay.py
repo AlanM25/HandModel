@@ -1,175 +1,166 @@
+# wireframeDisplay.py - MANO ANATÓMICA ESTILO 'CILINDROS Y ESFERAS HUMANAS + PALMA VISIBLE'
 import wireframe
 import pygame
-from obj_loader import *
-from drawShapes import *
 from pygame.locals import *
+from OpenGL.GL import *
+from OpenGL.GLU import *
 import mediapipe as mp
 import cv2
+import math
 
-key_to_function = {
-    pygame.K_LEFT:   (lambda x: x.translateAll('x', -10)),
-    pygame.K_RIGHT:  (lambda x: x.translateAll('x',  10)),
-    pygame.K_DOWN:   (lambda x: x.translateAll('y',  10)),
-    pygame.K_UP:     (lambda x: x.translateAll('y', -10)),
-    pygame.K_EQUALS: (lambda x: x.scaleAll(1.25)),
-    pygame.K_MINUS:  (lambda x: x.scaleAll( 0.8)),
-    pygame.K_q:      (lambda x: x.rotateAll('X',  0.1)),
-    pygame.K_w:      (lambda x: x.rotateAll('X', -0.1)),
-    pygame.K_a:      (lambda x: x.rotateAll('Y',  0.1)),
-    pygame.K_s:      (lambda x: x.rotateAll('Y', -0.1)),
-    pygame.K_z:      (lambda x: x.rotateAll('Z',  0.1)),
-    pygame.K_x:      (lambda x: x.rotateAll('Z', -0.1))}
+# Conexiones anatómicas de los 21 puntos
+HAND_CONNECTIONS = [
+    (0,1),(1,2),(2,3),(3,4),
+    (0,5),(5,6),(6,7),(7,8),
+    (5,9),(9,10),(10,11),(11,12),
+    (9,13),(13,14),(14,15),(15,16),
+    (13,17),(17,18),(18,19),(19,20)
+]
 
+# Nuevas caras de la palma para formar una superficie
+PALM_FACES = [
+    (0, 5, 9), (0, 9, 13), (0, 13, 17),
+    (5, 9, 13), (9, 13, 17)
+]
+
+def draw_cylinder(x1, y1, z1, x2, y2, z2, radius=5, slices=16):
+    vx, vy, vz = x2 - x1, y2 - y1, z2 - z1
+    length = math.sqrt(vx*vx + vy*vy + vz*vz)
+    if length < 0.0001:
+        return
+    ax = 57.2957795 * math.acos(vz / length)
+    rx, ry, rz = -vy * vz, vx * vz, 0.0
+    glPushMatrix()
+    glTranslatef(x1, y1, z1)
+    glRotatef(ax, rx, ry, rz)
+    quadric = gluNewQuadric()
+    gluCylinder(quadric, radius, radius * 0.85, length, slices, 1)
+    glPopMatrix()
+
+def draw_joint(x, y, z, radius=5.0, slices=16, stacks=16):
+    glPushMatrix()
+    glTranslatef(x, y, z)
+    quadric = gluNewQuadric()
+    gluSphere(quadric, radius, slices, stacks)
+    glPopMatrix()
+
+def draw_palm_surface(hand):
+    glColor4f(0.9, 0.7, 0.5, 0.4)
+    glBegin(GL_TRIANGLES)
+    for face in PALM_FACES:
+        for idx in face:
+            node = hand.nodes[idx]
+            glVertex3f(node.x, node.y, node.z)
+    glEnd()
+
+def get_finger_radius(i1, i2):
+    base_radius = {
+        0: 14, 1: 11, 2: 9, 3: 7, 4: 5,
+        5: 12, 6:10, 7:8, 8:6,
+        9: 12,10:10,11:8,12:6,
+        13:12,14:10,15:8,16:6,
+        17:11,18:9,19:7,20:5
+    }
+    return min(base_radius.get(i1, 6), base_radius.get(i2, 6))
+
+def get_finger_color(i1, i2):
+    if i1 == 0 or i2 == 0:
+        return (1.0, 0.85, 0.7)
+    return (0.93, 0.75, 0.6)
 
 class ProjectionViewer:
-    """ Displays 3D objects on a Pygame screen """
-
     def __init__(self, width, height):
         self.width = width
         self.height = height
-        self.screen = pygame.display.set_mode((width, height))
-        pygame.display.set_caption('3D Hand Model')
-        self.background = (0,0,0)
+        pygame.display.set_mode((width, height), DOUBLEBUF | OPENGL)
+        pygame.display.set_caption('Hand Model 3D')
+        gluPerspective(45, (width / height), 0.1, 2000.0)
+        glTranslatef(0, 0, -750)
 
+        glEnable(GL_DEPTH_TEST)
+        glEnable(GL_LIGHTING)
+        glEnable(GL_LIGHT0)
+        glEnable(GL_COLOR_MATERIAL)
+        glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE)
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+
+        self.mp_hands = mp.solutions.hands.Hands(
+            static_image_mode=False,
+            max_num_hands=1,
+            min_detection_confidence=0.5,
+            min_tracking_confidence=0.5
+        )
+        self.mp_draw = mp.solutions.drawing_utils
+        self.cap = cv2.VideoCapture(0)
         self.wireframes = {}
-        self.displayEdges = True
-        self.edgeColour = (200,0,0)
-        self.z = [[0 for x in range(height)] for y in range(width)]
-        self.light_pos = wireframe.Node((400,300,400))
 
-        # Initialize MediaPipe
-        self.mp_hands = mp.solutions.hands
-        self.hands = self.mp_hands.Hands()
-        self.mp_drawing = mp.solutions.drawing_utils
-
-    def addWireframe(self, name, wireframe):
-        """ Add a named wireframe object. """
-        self.wireframes[name] = wireframe
+    def addWireframe(self, name, wf):
+        self.wireframes[name] = wf
 
     def run(self):
-        """ Create a pygame screen until it is closed. """
         clock = pygame.time.Clock()
-        rx, ry = (0,0)
-        tx, ty = (0,0)
-        rotate = move = False
-
-        # Initialize webcam
-        cap = cv2.VideoCapture(0)
-
         running = True
         while running:
             clock.tick(30)
             for e in pygame.event.get():
                 if e.type == pygame.QUIT:
                     running = False
-                elif e.type == pygame.KEYDOWN:
-                    if e.key in key_to_function:
-                        key_to_function[e.key](self)
-                elif e.type == MOUSEBUTTONDOWN:
-                    if e.button == 3: rotate = True
-                    elif e.button == 1: move = True
-                elif e.type == MOUSEBUTTONUP:
-                    if e.button ==3: rotate = False
-                    elif e.button == 1: move = False
-                elif e.type == MOUSEMOTION:
-                    i, j = e.rel
-                    if rotate:
-                        rx += i
-                        ry += j
-                    if move:
-                        tx -= i
-                        ty += j
 
-            # Capture frame from webcam
-            ret, frame = cap.read()
+            ret, frame = self.cap.read()
             if not ret:
                 break
 
-            # Process frame with MediaPipe
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = self.hands.process(frame)
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            results = self.mp_hands.process(frame_rgb)
 
             if results.multi_hand_landmarks:
                 for hand_landmarks in results.multi_hand_landmarks:
-                    self.mp_drawing.draw_landmarks(frame, hand_landmarks, self.mp_hands.HAND_CONNECTIONS)
-                    # Update wireframe nodes with hand landmarks
-                    for i, landmark in enumerate(hand_landmarks.landmark):
-                        if i < len(hand.nodes):
-                            hand.nodes[i].x = landmark.x * self.width
-                            hand.nodes[i].y = landmark.y * self.height
-                            hand.nodes[i].z = landmark.z * 1000  # Scale z appropriately
+                    self.mp_draw.draw_landmarks(frame, hand_landmarks, mp.solutions.hands.HAND_CONNECTIONS)
+                    for i, lm in enumerate(hand.nodes):
+                        if i < 21:
+                            landmark = hand_landmarks.landmark[i]
+                            lm.x = (landmark.x - 0.5) * 350
+                            lm.y = -(landmark.y - 0.5) * 350
+                            lm.z = -(landmark.z - 0.1) * 450
 
-            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            cv2.imshow('MediaPipe Hands', frame)
-
-            if cv2.waitKey(5) & 0xFF == 27:
+            cv2.imshow('MediaPipe Webcam View', cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR))
+            if cv2.waitKey(1) & 0xFF == 27:
                 break
 
-            self.display(hand)
-
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+            self.displayVolumetric(self.wireframes['Hand'])
             pygame.display.flip()
 
-        cap.release()
+        self.cap.release()
         cv2.destroyAllWindows()
+        pygame.quit()
 
-    def clear_z(self):
-        for i in range(self.width):
-            for j in range(self.height):
-                self.z[i][j]=99999999.0
-                self.screen.set_at((i,j), self.background)
+    def displayVolumetric(self, hand):
+        draw_palm_surface(hand)  # Dibujar la palma visualmente
 
-    def display(self,hand):
-        """ Draw the wireframes on the screen. """
-        self.screen.fill(self.background)
-        for f in hand.faces:
-            if (len(f) == 3):
-                pygame.draw.line(self.screen, self.edgeColour, (hand.nodes[f[0]-1].x, hand.nodes[f[0]-1].y), (hand.nodes[f[1]-1].x, hand.nodes[f[1]-1].y))
-                pygame.draw.line(self.screen,self.edgeColour, (hand.nodes[f[1]-1].x, hand.nodes[f[1]-1].y), (hand.nodes[f[2]-1].x, hand.nodes[f[2]-1].y))
-                pygame.draw.line(self.screen,self.edgeColour, (hand.nodes[f[2]-1].x, hand.nodes[f[2]-1].y), (hand.nodes[f[0]-1].x, hand.nodes[f[0]-1].y))
-        """uncomment these sections to fill the wireframes with colors
-                draw_line(self.screen, (hand.nodes[f[0]-1].x, hand.nodes[f[0]-1].y), (hand.nodes[f[1]-1].x, hand.nodes[f[1]-1].y), self.edgeColour)
-                draw_line(self.screen, (hand.nodes[f[1]-1].x, hand.nodes[f[1]-1].y), (hand.nodes[f[2]-1].x, hand.nodes[f[2]-1].y),self.edgeColour)
-                draw_line(self.screen, (hand.nodes[f[2]-1].x, hand.nodes[f[2]-1].y), (hand.nodes[f[0]-1].x, hand.nodes[f[0]-1].y),self.edgeColour)
+        for i1, i2 in hand.edges:
+            if i1 < len(hand.nodes) and i2 < len(hand.nodes):
+                n1 = hand.nodes[i1]
+                n2 = hand.nodes[i2]
+                glColor3f(*get_finger_color(i1, i2))
+                radius = get_finger_radius(i1, i2)
+                draw_cylinder(n1.x, n1.y, n1.z, n2.x, n2.y, n2.z, radius=radius)
 
-        self.clear_z()
-        for f in hand.faces:
-            fillTriangle(self.screen,hand.nodes[f[0]-1],hand.nodes[f[1]-1],hand.nodes[f[2]-1],(194,151,120),self.z,self.light_pos)"""
-
-    def translateAll(self, axis, d):
-        """ Translate all wireframes along a given axis by d units. """
-        for wireframe in self.wireframes.values():
-            wireframe.translate(axis, d)
-
-    def scaleAll(self, scale):
-        """ Scale all wireframes by a given scale, centred on the centre of the screen. """
-        centre_x = self.width/2
-        centre_y = self.height/2
-        for wireframe in self.wireframes.values():
-            wireframe.scale((centre_x, centre_y), scale)
-
-    def rotateAll(self, axis, theta):
-        """ Rotate all wireframe about their centre, along a given axis by a given angle. """
-        rotateFunction = 'rotate' + axis
-        for wireframe in self.wireframes.values():
-            centre = wireframe.findCentre()
-            getattr(wireframe, rotateFunction)(centre, theta)
-
+        for idx, node in enumerate(hand.nodes):
+            joint_radius = get_finger_radius(idx, idx) * 0.6
+            draw_joint(node.x, node.y, node.z, radius=joint_radius)
 
 if __name__ == '__main__':
+    from obj_loader import OBJ
+    pygame.init()
     pv = ProjectionViewer(800, 600)
-    obj = OBJ('hand_3.obj')
+    obj = OBJ('anatomical_style_hand.obj')
     hand = wireframe.Wireframe()
     hand.addNodes(obj.vertices)
-    hand.faces = obj.faces
+    hand.addEdges(HAND_CONNECTIONS)
     pv.addWireframe('Hand', hand)
-
-    #isometric projection
-    hand.rotateX((0,0,0),0.785)
-    hand.rotateY((0,0,0),1.8)
-    hand.rotateZ((0,0,0),1.5)
-    hand.translate('x',400)
-    hand.translate('y',300)
-    hand.scale((400,300),650)
-
-    hand.camera_view(0,-3.14/2,0)
+    hand.rotateX(hand.findCentre(), 0.5)
+    hand.rotateY(hand.findCentre(), -0.3)
+    hand.scale((0, 0), 1.4)
     pv.run()

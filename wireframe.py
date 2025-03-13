@@ -12,11 +12,16 @@ class Wireframe:
     def __init__(self):
         self.nodes = []
         self.faces = []
+        self.edges = []
         self.camera = Node((100,100,-50))
 
     def addNodes(self, nodeList):
         for node in nodeList:
             self.nodes.append(Node(node))
+
+    def addEdges(self, edgeList):
+        for edge in edgeList:
+            self.edges.append(edge)
 
     def camera_view(self, heading, pitch, roll):
         self.rotateZ(self.findCentre(), roll)
